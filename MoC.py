@@ -177,7 +177,7 @@ if __name__ == '__main__':
     nx = 201
     ny = 201
 
-    def run_case(label, a, b, c, u0, L, H, s_max, exact_func, note='', y_max_valid=None):
+    def run_case(label, a, b, c, u0, L, H, s_max, exact_func, note='', y_max_valid=None, color_scale=None):
         moc = MethodOfCharacteristics(a, b, c, L, H, s_max, M, N, u0)
         res = moc.solve_moc()
         X = res['X']
@@ -217,16 +217,38 @@ if __name__ == '__main__':
 
         fig, axs = plt.subplots(1, 3, figsize=(15, 4))
         fig.suptitle(f'{label}) {note}', fontsize=12)
+        # Für die Darstellung: wenn color_scale gesetzt ist, saturiere Werte außerhalb
+        def saturate_for_plot(A, vmin, vmax):
+            Ap = np.array(A, copy=True)
+            mask = ~np.isnan(Ap)
+            Ap[mask] = np.clip(Ap[mask], vmin, vmax)
+            return Ap
 
-        im0 = axs[0].imshow(Ug, origin='lower', extent=(0, L, 0, H), aspect='auto')
+        vmin = vmax = None
+        if color_scale is not None:
+            vmin, vmax = color_scale
+            Ug_plot = saturate_for_plot(Ug, vmin, vmax)
+            Uexact_plot = saturate_for_plot(U_exact, vmin, vmax)
+        else:
+            Ug_plot = Ug
+            Uexact_plot = U_exact
+
+        im0 = axs[0].imshow(Ug_plot, origin='lower', extent=(0, L, 0, H), aspect='auto', vmin=vmin, vmax=vmax)
         axs[0].set_title(f'{label}) MoC Interpolation')
         fig.colorbar(im0, ax=axs[0])
 
-        im1 = axs[1].imshow(U_exact, origin='lower', extent=(0, L, 0, H), aspect='auto')
+        im1 = axs[1].imshow(Uexact_plot, origin='lower', extent=(0, L, 0, H), aspect='auto', vmin=vmin, vmax=vmax)
         axs[1].set_title(f'{label}) Exakte Lösung')
         fig.colorbar(im1, ax=axs[1])
 
-        im2 = axs[2].imshow(Ug - U_exact, origin='lower', extent=(0, L, 0, H), aspect='auto', cmap='bwr')
+        # Differenz – benutze symmetrische Skala basierend auf max-Abs-Differenz
+        diff = Ug - U_exact
+        diff_mask = ~np.isnan(diff)
+        if np.any(diff_mask):
+            dmax = np.nanmax(np.abs(diff))
+        else:
+            dmax = 1.0
+        im2 = axs[2].imshow(np.where(np.isnan(diff), np.nan, diff), origin='lower', extent=(0, L, 0, H), aspect='auto', cmap='bwr', vmin=-dmax, vmax=dmax)
         axs[2].set_title(f'{label}) Differenz (MoC - Exact)')
         fig.colorbar(im2, ax=axs[2])
 
@@ -234,7 +256,7 @@ if __name__ == '__main__':
             ax.set_xlabel('x')
             ax.set_ylabel('y')
 
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        plt.tight_layout(rect=(0, 0.03, 1, 0.95))
         plt.show()
 
     # Aufgabe a)
@@ -265,6 +287,8 @@ if __name__ == '__main__':
     note_b = "u * u_x + u_y = 0, u(x,0)=-x, exact: u=-x/(1-y) (nur für 0<=y<1)"
 
     # Run both cases and show two figures with Überschriften a) and b)
-    run_case('a', a_a, b_a, c_a, u0_a, L_a, H_a, s_max_a, exact_a, note_a)
-    run_case('b', a_b, b_b, c_b, u0_b, L_b, H_b, s_max_b, exact_b, note_b, y_max_valid=1.0)
+    # Bei Aufgabe (a) wollen wir die Skala -1..1 verwenden
+    run_case('a', a_a, b_a, c_a, u0_a, L_a, H_a, s_max_a, exact_a, note_a, color_scale=(-1.0, 1.0))
+    # Bei Aufgabe (b) vordefinierte Skala -2..0 (nach Anforderung: 0 bis -2)
+    run_case('b', a_b, b_b, c_b, u0_b, L_b, H_b, s_max_b, exact_b, note_b, y_max_valid=1.0, color_scale=(-2.0, 0.0))
 
