@@ -1,6 +1,26 @@
+### Vincent Rein und Aaron Schöne ###
+### Sheet 04 Exercise 3 ###
+### Beim bearbeiten dieses Blattes wurden Generative AI Tools verwendet, Copilot autocomplete in VS Code. ###
+
 import numpy as np
+import math
 
+# SciPy imports: versuche zu importieren, falls nicht vorhanden legen wir Platzhalter an
+try:
+    from scipy.integrate import solve_ivp
+    from scipy.interpolate import griddata, LinearNDInterpolator
+    from scipy.spatial import Delaunay
+except Exception:
+    solve_ivp = None
+    griddata = None
+    LinearNDInterpolator = None
+    Delaunay = None
 
+# Matplotlib ggf. optional (None, wenn nicht installiert)
+try:
+    import matplotlib.pyplot as plt
+except Exception:
+    plt = None
 class MethodOfCharacteristics:
     """Löst a(x,y,u) u_x + b(x,y,u) u_y = c(x,y,u) mittels Methode der
     Charakteristiken.
@@ -25,10 +45,8 @@ class MethodOfCharacteristics:
           dict mit 'x0_points' (N+1,), 's_eval' (M+1,), 'X','Y','U' Arrays der
           Form (M+1,N+1) mit NaNs außerhalb gültiger Teile der Trajektorien.
         """
-        try:
-            from scipy.integrate import solve_ivp
-        except Exception:
-            raise RuntimeError("scipy wird benötigt.")
+        if solve_ivp is None:
+            raise RuntimeError("scipy (scipy.integrate.solve_ivp) wird benötigt.")
 
         x0_points = np.linspace(0.0, self.L, self.N + 1)
         s_eval = np.linspace(0.0, self.s_max, self.M + 1)
@@ -36,20 +54,13 @@ class MethodOfCharacteristics:
         trajectories = []
 
         for x0 in x0_points:
-            try:
-                u0_val = self.u_0(float(x0))
-                u0 = float(u0_val)
-            except Exception as e:
-                raise TypeError("u_0(x) muss einen skalaren Wert zurückgeben und x als Skalar akzeptieren") from e
-
+            u0_val = self.u_0(float(x0))
+            u0 = float(u0_val)
             def rhs(s, Y):
                 x, y, u = Y
-                try:
-                    ax = float(self.a(float(x), float(y), float(u)))
-                    by = float(self.b(float(x), float(y), float(u)))
-                    cu = float(self.c(float(x), float(y), float(u)))
-                except Exception as e:
-                    raise TypeError("a,b,c müssen skalare Ausgaben für skalare x,y,u liefern") from e
+                ax = float(self.a(float(x), float(y), float(u)))
+                by = float(self.b(float(x), float(y), float(u)))
+                cu = float(self.c(float(x), float(y), float(u)))
                 return [ax, by, cu]
 
             sol = solve_ivp(rhs, (0.0, float(self.s_max)), [float(x0), 0.0, u0], t_eval=s_eval, rtol=1e-6, atol=1e-8)
@@ -129,10 +140,8 @@ class MethodOfCharacteristics:
         """Interpoliert Punkte (X,Y,U) auf ein regelmäßiges Gitter in [0,L]x[0,H].
         Nicht abgedeckte Stellen bleiben NaN. Nur für skalare u gedacht.
         """
-        try:
-            from scipy.interpolate import griddata
-        except Exception:
-            raise RuntimeError("scipy.interpolate wird benötigt.")
+        if griddata is None:
+            raise RuntimeError("scipy.interpolate.griddata wird benötigt.")
 
         mask = ~np.isnan(U)
         if np.count_nonzero(mask) == 0:
@@ -146,21 +155,23 @@ class MethodOfCharacteristics:
         Xg, Yg = np.meshgrid(xg, yg, indexing='xy')
         grid_pts = np.column_stack((Xg.ravel(), Yg.ravel()))
 
-        # Versuche robuste Linear-Interpolation, fallback auf nearest
-        try:
-            from scipy.spatial import Delaunay
-            from scipy.interpolate import LinearNDInterpolator
-            tri = Delaunay(pts, qhull_options='QJ')
-            lin = LinearNDInterpolator(tri, vals, fill_value=np.nan)
-            Ug_flat = lin(grid_pts)
-            Ug = np.asarray(Ug_flat).reshape((ny, nx))
-            # Punkte außerhalb auf NaN setzen
-            simplex = tri.find_simplex(grid_pts)
-            in_hull = simplex >= 0
-            Ug_flat = Ug.ravel()
-            Ug_flat[~in_hull] = np.nan
-            Ug = Ug_flat.reshape((ny, nx))
-        except Exception:
+        # Versuche robuste Linear-Interpolation über Delaunay, fallback auf griddata
+        if Delaunay is not None and LinearNDInterpolator is not None:
+            try:
+                tri = Delaunay(pts, qhull_options='QJ')
+                lin = LinearNDInterpolator(tri, vals, fill_value=np.nan)
+                Ug_flat = lin(grid_pts)
+                Ug = np.asarray(Ug_flat).reshape((ny, nx))
+                # Punkte außerhalb auf NaN setzen
+                simplex = tri.find_simplex(grid_pts)
+                in_hull = simplex >= 0
+                Ug_flat = Ug.ravel()
+                Ug_flat[~in_hull] = np.nan
+                Ug = Ug_flat.reshape((ny, nx))
+            except Exception:
+                Ug = griddata(pts, vals, grid_pts, method=method, fill_value=np.nan)
+                Ug = Ug.reshape((ny, nx))
+        else:
             Ug = griddata(pts, vals, grid_pts, method=method, fill_value=np.nan)
             Ug = Ug.reshape((ny, nx))
 
@@ -169,7 +180,6 @@ class MethodOfCharacteristics:
 
 if __name__ == '__main__':
     # Setze gemeinsame Parameter
-    import math
 
     # Standardwerte
     N = 100
@@ -291,4 +301,3 @@ if __name__ == '__main__':
     run_case('a', a_a, b_a, c_a, u0_a, L_a, H_a, s_max_a, exact_a, note_a, color_scale=(-1.0, 1.0))
     # Bei Aufgabe (b) vordefinierte Skala -2..0 (nach Anforderung: 0 bis -2)
     run_case('b', a_b, b_b, c_b, u0_b, L_b, H_b, s_max_b, exact_b, note_b, y_max_valid=1.0, color_scale=(-2.0, 0.0))
-
