@@ -35,20 +35,17 @@ class MethodOfCharacteristics:
           dict mit 'x0_points' (N+1,), 's_eval' (M+1,), 'X','Y','U' Arrays der
           Form (M+1,N+1) mit NaNs außerhalb gültiger Teile der Trajektorien.
         """
-        # Lazy import von SciPy
         try:
             from scipy.integrate import solve_ivp
         except Exception:
-            raise RuntimeError("scipy wird benötigt: python3 -m pip install --user scipy")
+            raise RuntimeError("scipy wird benötigt.")
 
         x0_points = np.linspace(0.0, self.L, self.N + 1)
         s_eval = np.linspace(0.0, self.s_max, self.M + 1)
 
-        # temporäre Speicherung der Trajektorien
         trajectories = []
 
         for x0 in x0_points:
-            # Anfangsbedingungen: x=x0, y=0, u=u0(x0)
             try:
                 u0_val = self.u_0(float(x0))
                 u0 = float(u0_val)
@@ -76,13 +73,17 @@ class MethodOfCharacteristics:
             if not np.all(valid):
                 valid_idx = np.where(valid)[0]
                 if valid_idx.size == 0:
-                    last = 0
+                    # keine gültigen Punkte entlang dieser Charakteristik -> leere Trajektorie
+                    Xs = np.array([], dtype=float)
+                    Ys = np.array([], dtype=float)
+                    Us = np.array([], dtype=float)
+                    s_local = np.array([], dtype=float)
                 else:
                     last = valid_idx[-1]
-                Xs = Xs[: last + 1]
-                Ys = Ys[: last + 1]
-                Us = Us[: last + 1]
-                s_local = sol.t[: last + 1]
+                    Xs = Xs[: last + 1]
+                    Ys = Ys[: last + 1]
+                    Us = Us[: last + 1]
+                    s_local = sol.t[: last + 1]
             else:
                 s_local = sol.t
 
@@ -97,17 +98,19 @@ class MethodOfCharacteristics:
 
         for j, traj in enumerate(trajectories):
             lj = traj['x'].shape[0]
-            X[:lj, j] = traj['x']
-            Y[:lj, j] = traj['y']
-            U[:lj, j] = traj['u']
+            if lj > 0:
+                X[:lj, j] = traj['x']
+                Y[:lj, j] = traj['y']
+                U[:lj, j] = traj['u']
 
-        # Invertierbarkeitsprüfung anhand signierter Flächen
+        # Invertierbarkeitsprüfung anhand Flächen
         area_threshold = 1e-8
         max_k = np.full(J, self.M, dtype=int)
 
         for k in range(0, K - 1):
             for j in range(0, J - 1):
-                corners = [X[k, j], Y[k, j], X[k + 1, j], Y[k + 1, j], X[k + 1, j + 1], Y[k + 1, j + 1], X[k, j + 1], Y[k, j + 1]]
+                corners = np.array([X[k, j], Y[k, j], X[k + 1, j], Y[k + 1, j],
+                                    X[k + 1, j + 1], Y[k + 1, j + 1], X[k, j + 1], Y[k, j + 1]])
                 if np.any(np.isnan(corners)):
                     continue
                 p1 = np.array([X[k, j], Y[k, j]])
@@ -118,7 +121,7 @@ class MethodOfCharacteristics:
                 v2 = p4 - p2
                 det = v1[0] * v2[1] - v1[1] * v2[0]
                 signed_area = 0.5 * det
-                if signed_area < area_threshold:
+                if abs(signed_area) < area_threshold:
                     max_k[j] = min(max_k[j], k)
                     max_k[j + 1] = min(max_k[j + 1], k)
 
@@ -139,7 +142,7 @@ class MethodOfCharacteristics:
         try:
             from scipy.interpolate import griddata
         except Exception:
-            raise RuntimeError("scipy.interpolate wird benötigt: python3 -m pip install --user scipy")
+            raise RuntimeError("scipy.interpolate wird benötigt.")
 
         mask = ~np.isnan(U)
         if np.count_nonzero(mask) == 0:
@@ -161,7 +164,7 @@ class MethodOfCharacteristics:
             lin = LinearNDInterpolator(tri, vals, fill_value=np.nan)
             Ug_flat = lin(grid_pts)
             Ug = np.asarray(Ug_flat).reshape((ny, nx))
-            # Punkte außerhalb konvexer Hülle auf NaN setzen
+            # Punkte außerhalb auf NaN setzen
             simplex = tri.find_simplex(grid_pts)
             in_hull = simplex >= 0
             Ug_flat = Ug.ravel()
@@ -197,6 +200,8 @@ if __name__ == '__main__':
         return math.sin(float(x))
 
     moc = MethodOfCharacteristics(a, b, c, L, H, s_max, M, N, u_0)
+
+    # Einmal lösen
     res = moc.solve_moc()
 
     X = res['X']
@@ -204,11 +209,16 @@ if __name__ == '__main__':
     U = res['U']
 
     print('Anzahl gültiger MoC-Punkte:', int(np.count_nonzero(~np.isnan(U))))
-    print('X range:', float(np.nanmin(X)), float(np.nanmax(X)))
-    print('Y range:', float(np.nanmin(Y)), float(np.nanmax(Y)))
+    if np.count_nonzero(~np.isnan(U)) > 0:
+        print('X range:', float(np.nanmin(X)), float(np.nanmax(X)))
+        print('Y range:', float(np.nanmin(Y)), float(np.nanmax(Y)))
 
     # Interpolation
-    xg, yg, Ug = moc.interpolate_solution(X, Y, U, nx=201, ny=201, method='linear')
+    try:
+        xg, yg, Ug = moc.interpolate_solution(X, Y, U, nx=201, ny=201, method='linear')
+    except Exception as e:
+        print('Interpolation fehlgeschlagen:', e)
+        raise
 
     # Exakte Lösung
     Xg, Yg = np.meshgrid(xg, yg, indexing='xy')
@@ -225,65 +235,8 @@ if __name__ == '__main__':
 
     try:
         import matplotlib.pyplot as plt
-        fig, axs = plt.subplots(1, 3, figsize=(15, 5))
-        im0 = axs[0].imshow(Ug, origin='lower', extent=(0, L, 0, H), aspect='auto')
-        axs[0].set_title('MoC Interpolation u(x,y)')
-        fig.colorbar(im0, ax=axs[0])
-
-        im1 = axs[1].imshow(U_exact, origin='lower', extent=(0, L, 0, H), aspect='auto')
-        axs[1].set_title('Exakte Lösung u(x,y)')
-        fig.colorbar(im1, ax=axs[1])
-
-        im2 = axs[2].imshow(Ug - U_exact, origin='lower', extent=(0, L, 0, H), aspect='auto', cmap='bwr')
-        axs[2].set_title('Differenz (MoC - Exact)')
-        fig.colorbar(im2, ax=axs[2])
-
-        plt.tight_layout()
-        plt.show()
     except Exception:
-        print('Matplotlib nicht installiert — Plots übersprungen.')
-        res = moc.solve_moc()
-    except Exception as e:
-        print('solve_moc fehlgeschlagen:', e)
-        raise
-
-    X = res['X']
-    Y = res['Y']
-    U = res['U']
-
-    # Diagnostics: coverage of computed characteristic grid
-    valid_pts = ~np.isnan(U)
-    print('Anzahl gültiger MoC-Punkte:', int(np.count_nonzero(valid_pts)))
-    if np.count_nonzero(valid_pts) > 0:
-        print('X range:', float(np.nanmin(X)), float(np.nanmax(X)))
-        print('Y range:', float(np.nanmin(Y)), float(np.nanmax(Y)))
-
-    # Interpolate onto a regular grid for plotting and comparison
-    try:
-        xg, yg, Ug = moc.interpolate_solution(X, Y, U, nx=201, ny=201, method='linear')
-    except Exception as e:
-        print('Interpolation fehlgeschlagen:', e)
-        raise
-
-    # exact solution u(x,y)=sin(x - y/2)
-    Xg, Yg = np.meshgrid(xg, yg, indexing='xy')
-    U_exact = np.sin(Xg - 0.5 * Yg)
-
-    # Fehlerberechnung nur auf Gitterpunkten, die eine Interpolation besitzen
-    mask = ~np.isnan(Ug)
-    if np.any(mask):
-        diff = Ug[mask] - U_exact[mask]
-        l2 = np.sqrt(np.mean(diff ** 2))
-        linf = np.max(np.abs(diff))
-        print(f'Fehler (L2) = {l2:.6e}, (Linf) = {linf:.6e} auf {np.count_nonzero(mask)} Punkten')
-    else:
-        print('Keine interpolierten Punkte zum Vergleich vorhanden.')
-
-    # Plot result, exact solution and difference
-    try:
-        import matplotlib.pyplot as plt
-    except Exception:
-        print('Matplotlib wird zum Plotten benötigt. Installiere mit: python3 -m pip install --user matplotlib')
+        print('Matplotlib wird zum Plotten benötigt.')
     else:
         fig, axs = plt.subplots(1, 3, figsize=(15, 5))
         im0 = axs[0].imshow(Ug, origin='lower', extent=(0, L, 0, H), aspect='auto')
